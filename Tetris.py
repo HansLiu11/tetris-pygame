@@ -1,5 +1,13 @@
 import random
 import pygame
+import numpy as np
+import cv2
+import time
+import threading
+from time import sleep
+import tensorflow.keras
+from tensorflow.keras.preprocessing import image
+import tensorflow as tf
 
 """
 10 x 20 grid
@@ -30,9 +38,9 @@ block_size = 30  # size of block
 top_left_x = (s_width - play_width) // 2
 top_left_y = s_height - play_height - 50
 
-filepath = '/Users/rajat/PycharmProjects/Tetris/highscore.txt'
-fontpath = '/Users/rajat/PycharmProjects/Tetris/arcade.ttf'
-fontpath_mario = '/Users/rajat/PycharmProjects/Tetris/mario.ttf'
+filepath = 'highscore.txt'
+fontpath = 'arcade.TTF'
+fontpath_mario = 'mario.ttf'
 
 # shapes formats
 
@@ -142,9 +150,13 @@ T = [['.....',
 shapes = [S, Z, I, O, J, L, T]
 shape_colors = [(0, 255, 0), (255, 0, 0), (0, 255, 255), (255, 255, 0), (255, 165, 0), (0, 0, 255), (128, 0, 128)]
 
+# Labels - The various possibilities
+labels = ['left','right','up','down']
+
+# Loading the model weigths
+model = tensorflow.keras.models.load_model('keras_model.h5')
 
 # class to represent each of the pieces
-
 
 class Piece(object):
     def __init__(self, x, y, shape):
@@ -153,6 +165,39 @@ class Piece(object):
         self.shape = shape
         self.color = shape_colors[shapes.index(shape)]  # choose color from the shape_color list
         self.rotation = 0  # chooses the rotation according to index
+
+
+class webcamCapture:
+    def __init__(self):
+        self.Frame = []
+        self.success = False
+        self.isstop = False
+		
+	# 攝影機連接。
+        self.capture = cv2.VideoCapture(0) # Using laptop's webcam as source of video
+
+    def start(self):
+	# 把程式放進子執行緒，daemon=True 表示該執行緒會隨著主執行緒關閉而關閉。
+        print('webcam started!')
+        threading.Thread(target=self.queryframe, daemon=True, args=()).start()
+
+    def stop(self):
+	# 停止無限迴圈。
+        self.isstop = True
+        print('webcam stopped!')
+   
+    def getframe(self):
+	# 當有需要影像時，再回傳最新的影像。
+        return self.Frame.copy()
+    
+    def getstatus(self):
+        return self.success
+
+    def queryframe(self):
+        while (not self.isstop):
+            self.success, self.Frame = self.capture.read()
+        
+        self.capture.release()
 
 
 # initialise the grid
@@ -365,9 +410,16 @@ def get_max_score():
         score = int(lines[0].strip())   # remove \n
 
     return score
-
+# 連接攝影機
+webcam = webcamCapture()
+# 啟動子執行緒
+webcam.start()
+# 暫停1秒，確保影像已經填充
+time.sleep(1)
 
 def main(window):
+    
+    # cap = cv2.VideoCapture(0)  
     locked_positions = {}
     create_grid(locked_positions)
 
@@ -379,6 +431,7 @@ def main(window):
     fall_time = 0
     fall_speed = 0.35
     level_time = 0
+    pred_time = 0
     score = 0
     last_score = get_max_score()
 
@@ -386,10 +439,42 @@ def main(window):
         # need to constantly make new grid as locked positions always change
         grid = create_grid(locked_positions)
 
+        CAPEVENT = pygame.USEREVENT + 1
+        success = webcam.getstatus()
+        if success == True:
+            image = webcam.getframe()
+            # The model takes an image of dimensions (224,224) as input so let's reshape our img to the same.
+            image = cv2.resize(image,(400,400))
+            cv2.imshow("Frame",image)
+            img = cv2.resize(image,(224,224))
+            
+            # Convert the image to a numpy array
+            img = np.array(img,dtype=np.float32)
+            
+            img = np.expand_dims(img,axis=0)
+            
+            # Normalizing
+            img = img/255
+            
+            # Predict the class
+            prediction = model.predict(img)
+            
+            # Map the prediction to a class name
+            predicted_class = np.argmax(prediction[0], axis=-1)
+            predicted_class_name = labels[predicted_class]
+            
+            # add an event
+            cap_event = pygame.event.Event(CAPEVENT, {"message": "Get Capture"})
+            #将这个事件加入到事件队列
+            pygame.event.post(cap_event)
+        
+       
+
         # helps run the same on every computer
         # add time since last tick() to fall_time
         fall_time += clock.get_rawtime()  # returns in milliseconds
         level_time += clock.get_rawtime()
+        pred_time += clock.get_rawtime()    
 
         clock.tick()  # updates clock
 
@@ -407,35 +492,42 @@ def main(window):
                 # need to lock the piece position
                 # need to generate new piece
                 change_piece = True
-
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                print("q")
                 run = False
                 pygame.display.quit()
                 quit()
 
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LEFT:
+            elif event.type == CAPEVENT and pred_time / 1000 >= 1: #detect every 1 second
+                pred_time = 0
+                print(predicted_class_name)
+                if predicted_class_name == 'left' :
                     current_piece.x -= 1  # move x position left
                     if not valid_space(current_piece, grid):
                         current_piece.x += 1
+                    sleep(0.1) 
 
-                elif event.key == pygame.K_RIGHT:
+                elif predicted_class_name == 'right':
                     current_piece.x += 1  # move x position right
                     if not valid_space(current_piece, grid):
                         current_piece.x -= 1
+                    sleep(0.1) 
 
-                elif event.key == pygame.K_DOWN:
+                elif predicted_class_name == 'down':
                     # move shape down
                     current_piece.y += 1
                     if not valid_space(current_piece, grid):
                         current_piece.y -= 1
+                    sleep(0.1) 
 
-                elif event.key == pygame.K_UP:
+                elif predicted_class_name == 'up':
                     # rotate shape
                     current_piece.rotation = current_piece.rotation + 1 % len(current_piece.shape)
                     if not valid_space(current_piece, grid):
                         current_piece.rotation = current_piece.rotation - 1 % len(current_piece.shape)
+                    sleep(0.1) 
 
         piece_pos = convert_shape_format(current_piece)
 
@@ -466,6 +558,8 @@ def main(window):
             run = False
 
     draw_text_middle('You Lost', 40, (255, 255, 255), window)
+    cv2.destroyAllWindows()
+    webcam.stop()
     pygame.display.update()
     pygame.time.delay(2000)  # wait for 2 seconds
     pygame.quit()
