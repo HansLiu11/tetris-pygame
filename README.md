@@ -1,6 +1,6 @@
 # Tetris AI
     Tetris game made with the Pygame library in Python.
-    Hand check model from Google Teacheable machine
+    Gesture recognition model from Google Teacheable machine
 
 ## Fork from: [rajatdiptabiswas/tetris-pygame](https://github.com/rajatdiptabiswas/tetris-pygame)
 
